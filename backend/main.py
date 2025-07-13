@@ -8,6 +8,7 @@ import asyncio
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
 
@@ -27,6 +28,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 class ChatRequest(BaseModel):
@@ -79,7 +81,32 @@ class OllamaService:
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=300.0)
     
-    async def generate(self, prompt: str, model: str = "gemma:2b") -> str:
+    async def generate_stream(self, prompt: str, model: str = "mistral:7b"):
+        """Stream generation from Ollama"""
+        try:
+            async with self.client.stream(
+                "POST",
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": True
+                }
+            ) as response:
+                async for line in response.aiter_lines():
+                    if line:
+                        try:
+                            data = json.loads(line)
+                            if "response" in data:
+                                yield data["response"]
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            logger.error(f"Ollama stream error: {e}")
+            yield f"錯誤：{str(e)}"
+    
+    async def generate(self, prompt: str, model: str = "mistral:7b") -> str:
+        """Non-streaming generation"""
         try:
             response = await self.client.post(
                 f"{self.base_url}/api/generate",
@@ -157,6 +184,66 @@ async def upload_file(file: UploadFile = File(...)):
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
+    """支援串流回應的聊天端點"""
+    async def generate():
+        try:
+            # 準備上下文
+            context = []
+            
+            # 如果有文件，添加文件上下文
+            if request.file_ids:
+                for file_id in request.file_ids:
+                    if file_id in file_storage:
+                        file_info = file_storage[file_id]
+                        context.append(f"文件：{file_info['filename']}")
+                        context.append(f"類型：{file_info['analysis'].get('file_type', 'unknown')}")
+                        
+                        # 添加部分內容
+                        content_preview = file_info['content'][:2000]
+                        context.append(f"內容預覽：\n{content_preview}\n...")
+            
+            # 構建提示詞
+            if context:
+                # 有文件上下文
+                prompt = f"""你是 Android ANR 和 Tombstone 分析專家。
+
+相關文件信息：
+{chr(10).join(context)}
+
+用戶問題：{request.message}
+
+請提供專業的分析和建議："""
+            else:
+                # 沒有文件，作為一般 AI 助手
+                prompt = f"""你是一個友善的 AI 助手，可以回答各種問題。
+
+用戶問題：{request.message}
+
+請提供幫助："""
+            
+            # 串流生成回應
+            async for chunk in ollama_service.generate_stream(prompt):
+                yield f"data: {json.dumps({'type': 'content', 'content': chunk})}\n\n"
+            
+            # 發送完成信號
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Chat error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+
+@app.post("/chat/non-stream")
+async def chat_non_stream(request: ChatRequest):
+    """非串流版本的聊天（備用）"""
     try:
         context = []
         
@@ -173,7 +260,8 @@ async def chat(request: ChatRequest):
                     context.append(f"內容預覽：\n{content_preview}\n...")
         
         # 構建提示詞
-        prompt = f"""你是 Android ANR 和 Tombstone 分析專家。
+        if context:
+            prompt = f"""你是 Android ANR 和 Tombstone 分析專家。
 
 相關文件信息：
 {chr(10).join(context)}
@@ -181,6 +269,12 @@ async def chat(request: ChatRequest):
 用戶問題：{request.message}
 
 請提供專業的分析和建議："""
+        else:
+            prompt = f"""你是一個友善的 AI 助手，可以回答各種問題。
+
+用戶問題：{request.message}
+
+請提供幫助："""
         
         # 調用 AI
         response = await ollama_service.generate(prompt)

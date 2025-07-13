@@ -61,6 +61,12 @@ download_models() {
     sleep 10
     
     # 下載模型
+    echo "下載 qwen:0.5b 模型..."
+    docker exec -it anr_ollama ollama pull qwen:0.5b
+
+    echo "下載 gemma:2b 模型..."
+    docker exec -it anr_ollama ollama pull gemma:2b
+
     echo "下載 mistral:7b 模型..."
     docker exec -it anr_ollama ollama pull mistral:7b
     
