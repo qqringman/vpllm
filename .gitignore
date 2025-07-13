@@ -1,0 +1,39 @@
+# 環境變量和密碼
+.env
+.env.local
+passwords.txt
+
+# Docker volumes
+*_data/
+
+# 日誌文件
+*.log
+
+# 系統文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+
+# 測試文件
+*.anr
+*.tombstone
+*.log

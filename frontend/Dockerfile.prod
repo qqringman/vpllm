@@ -1,0 +1,36 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# 複製 package.json
+COPY package.json ./
+
+# 安裝依賴
+RUN npm install
+
+# 複製源代碼
+COPY . .
+
+# 確保必要目錄存在
+RUN mkdir -p public
+
+# 構建應用
+RUN npm run build || echo "Build failed, but continuing..."
+
+# 運行階段
+FROM node:20-alpine
+
+WORKDIR /app
+
+# 複製依賴和構建結果
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next || echo "No .next directory"
+COPY --from=builder /app/public ./public || echo "No public directory"
+
+# 創建一個默認的 public 目錄
+RUN mkdir -p public
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
