@@ -69,7 +69,13 @@ download_models() {
 
     echo "下載 mistral:7b 模型..."
     docker exec -it anr_ollama ollama pull mistral:7b
-    
+
+    echo "下載 deepseek-coder:6.7b 模型..."
+    docker exec -it anr_ollama ollama pull deepseek-coder:6.7b
+
+    echo "下載 starcoder2:7b 模型..."
+    docker exec -it anr_ollama ollama pull starcoder2:7b
+
     echo "下載 codellama:7b 模型（可選）..."
     docker exec -it anr_ollama ollama pull codellama:7b || true
     

@@ -81,7 +81,7 @@ class OllamaService:
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=300.0)
     
-    async def generate_stream(self, prompt: str, model: str = "mistral:7b"):
+    async def generate_stream(self, prompt: str, model: str = "deepseek-coder:6.7b"):
         """Stream generation from Ollama"""
         try:
             async with self.client.stream(
@@ -105,7 +105,7 @@ class OllamaService:
             logger.error(f"Ollama stream error: {e}")
             yield f"錯誤：{str(e)}"
     
-    async def generate(self, prompt: str, model: str = "mistral:7b") -> str:
+    async def generate(self, prompt: str, model: str = "deepseek-coder:6.7b") -> str:
         """Non-streaming generation"""
         try:
             response = await self.client.post(
@@ -199,7 +199,7 @@ async def chat(request: ChatRequest):
                         context.append(f"類型：{file_info['analysis'].get('file_type', 'unknown')}")
                         
                         # 添加部分內容
-                        content_preview = file_info['content'][:2000]
+                        content_preview = file_info['content'][:3500]
                         context.append(f"內容預覽：\n{content_preview}\n...")
             
             # 構建提示詞
@@ -212,7 +212,10 @@ async def chat(request: ChatRequest):
 
 用戶問題：{request.message}
 
-請提供專業的分析和建議："""
+請提供專業的分析和建議：
+1. 指出發生 ANR/Tombstone 的 Process
+2. 列出 ANR/Tombstone Process main thread 卡住的 backtrace
+3. 找出卡住可能的原因 (要解釋原因) """
             else:
                 # 沒有文件，作為一般 AI 助手
                 prompt = f"""你是一個友善的 AI 助手，可以回答各種問題。
