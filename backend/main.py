@@ -79,7 +79,7 @@ class OllamaService:
         self.base_url = base_url
         self.client = httpx.AsyncClient(timeout=300.0)
     
-    async def generate(self, prompt: str, model: str = "mistral:7b") -> str:
+    async def generate(self, prompt: str, model: str = "gemma:2b") -> str:
         try:
             response = await self.client.post(
                 f"{self.base_url}/api/generate",
