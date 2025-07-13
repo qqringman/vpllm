@@ -845,29 +845,108 @@
             animation: spin 0.8s linear infinite;
         }
         
+        /* 正在思考動畫 */
+        .thinking-animation {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            color: var(--text-secondary);
+            font-size: 0.938rem;
+        }
+        
+        .thinking-text {
+            opacity: 0.8;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0.8; }
+            50% { opacity: 0.5; }
+        }
+        
+        .thinking-dots {
+            display: inline-flex;
+            margin-left: 2px;
+        }
+        
+        .thinking-dots .dot {
+            display: inline-block;
+            color: var(--accent-primary);
+            font-weight: bold;
+            font-size: 1.2em;
+            line-height: 1;
+            opacity: 0;
+            animation: dotAnimation 1.4s infinite;
+        }
+        
+        .thinking-dots .dot:nth-child(1) {
+            animation-delay: 0s;
+        }
+        
+        .thinking-dots .dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        
+        .thinking-dots .dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes dotAnimation {
+            0%, 60%, 100% {
+                opacity: 0;
+                transform: scale(0.8) translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: scale(1.2) translateY(-3px);
+            }
+        }
+        
+        /* 打字指示器（備用） */
         .typing-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .typing-indicator::before,
+        .typing-indicator::after,
+        .typing-indicator span {
+            content: '';
             display: inline-block;
             width: 8px;
             height: 8px;
             background: var(--accent-primary);
             border-radius: 50%;
-            animation: blink 1.4s infinite both;
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            opacity: 0.4;
+            animation: typingBounce 1.4s infinite;
+        }
+        
+        .typing-indicator::before {
+            animation-delay: 0s;
+        }
+        
+        .typing-indicator span {
+            animation-delay: 0.2s;
+        }
+        
+        .typing-indicator::after {
+            animation-delay: 0.4s;
+        }
+        
+        @keyframes typingBounce {
+            0%, 60%, 100% {
+                transform: translateY(0);
+                opacity: 0.4;
+            }
+            30% {
+                transform: translateY(-10px);
+                opacity: 1;
+            }
         }
         
         @keyframes spin {
             to { transform: rotate(360deg); }
-        }
-        
-        @keyframes blink {
-            0%, 60%, 100% { 
-                opacity: 0.3;
-                transform: scale(0.8);
-            }
-            30% { 
-                opacity: 1;
-                transform: scale(1);
-            }
         }
         
         /* Welcome Screen */
@@ -945,7 +1024,36 @@
             }
         }
 
-        /* 統一的滾動條樣式 */
+        /* 狀態消息樣式 */
+        .status-message {
+            font-size: 0.75rem;
+            color: var(--text-tertiary);
+            font-style: italic;
+            margin-top: 0.5rem;
+            opacity: 0;
+            animation: fadeIn 0.5s ease forwards;
+        }
+        
+        /* 思考狀態變化 */
+        .thinking-animation.long-wait .thinking-text {
+            animation: colorShift 3s ease-in-out infinite;
+        }
+        
+        @keyframes colorShift {
+            0%, 100% { color: var(--text-secondary); }
+            50% { color: var(--accent-primary); }
+        }
+        
+        @keyframes fadeIn {
+            from { 
+                opacity: 0;
+                transform: translateY(5px);
+            }
+            to { 
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }        /* 統一的滾動條樣式 */
         * {
             scrollbar-width: thin;
             scrollbar-color: var(--scrollbar-color) transparent;
@@ -1374,12 +1482,15 @@
             input.value = '';
             adjustTextarea();
             
+            // 添加一個臨時的 AI 消息容器用於串流顯示
+            const assistantMessage = addStreamMessage();
+            
             try {
                 isProcessing = true;
                 showLoading(true);
                 
-                // 先嘗試非串流版本
-                const response = await fetch(API_BASE_URL + '/chat/non-stream', {
+                // 使用串流版本
+                const response = await fetch(API_BASE_URL + '/chat', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -1392,21 +1503,65 @@
                 });
                 
                 if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error('請求失敗 (' + response.status + '): ' + errorText);
+                    throw new Error('請求失敗 (' + response.status + ')');
                 }
                 
-                const data = await response.json();
-                addMessage('assistant', data.response || '抱歉，我暫時無法回答您的問題。');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let hasContent = false;
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.type === 'content') {
+                                    if (!hasContent) {
+                                        // 第一次收到內容，移除思考動畫
+                                        hasContent = true;
+                                        clearStreamMessage(assistantMessage);
+                                    }
+                                    updateStreamMessage(assistantMessage, data.content);
+                                } else if (data.type === 'done') {
+                                    finalizeStreamMessage(assistantMessage);
+                                } else if (data.type === 'error') {
+                                    if (!hasContent) {
+                                        clearStreamMessage(assistantMessage);
+                                    }
+                                    updateStreamMessage(assistantMessage, '❌ 錯誤：' + data.error);
+                                    finalizeStreamMessage(assistantMessage);
+                                }
+                            } catch (e) {
+                                console.error('解析錯誤:', e);
+                            }
+                        }
+                    }
+                }
+                
+                // 如果沒有收到任何內容，顯示錯誤
+                if (!hasContent) {
+                    clearStreamMessage(assistantMessage);
+                    updateStreamMessage(assistantMessage, '抱歉，沒有收到回應。請稍後再試。');
+                    finalizeStreamMessage(assistantMessage);
+                }
                 
             } catch (error) {
                 console.error('聊天錯誤:', error);
                 
-                // 如果非串流也失敗，嘗試串流版本
+                // 如果串流失敗，嘗試非串流版本
                 try {
-                    const assistantMessage = addStreamMessage();
+                    clearStreamMessage(assistantMessage);
+                    updateStreamMessage(assistantMessage, '');
                     
-                    const response = await fetch(API_BASE_URL + '/chat', {
+                    const response = await fetch(API_BASE_URL + '/chat/non-stream', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json'
@@ -1419,42 +1574,18 @@
                     });
                     
                     if (!response.ok) {
-                        throw new Error('串流請求也失敗');
+                        throw new Error('非串流請求也失敗');
                     }
                     
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
+                    const data = await response.json();
+                    updateStreamMessage(assistantMessage, data.response || '抱歉，我暫時無法回答您的問題。');
+                    finalizeStreamMessage(assistantMessage);
                     
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split('\n');
-                        buffer = lines.pop() || '';
-                        
-                        for (const line of lines) {
-                            if (line.startsWith('data: ')) {
-                                try {
-                                    const data = JSON.parse(line.slice(6));
-                                    if (data.type === 'content') {
-                                        updateStreamMessage(assistantMessage, data.content);
-                                    } else if (data.type === 'done') {
-                                        finalizeStreamMessage(assistantMessage);
-                                    } else if (data.type === 'error') {
-                                        updateStreamMessage(assistantMessage, '❌ 錯誤：' + data.error);
-                                        finalizeStreamMessage(assistantMessage);
-                                    }
-                                } catch (e) {
-                                    console.error('解析錯誤:', e);
-                                }
-                            }
-                        }
-                    }
-                } catch (streamError) {
-                    console.error('串流錯誤:', streamError);
-                    addMessage('assistant', '❌ 連接錯誤：' + error.message + '\n\n請檢查：\n1. 後端服務是否正常運行\n2. Ollama 是否已下載模型\n3. 網絡連接是否正常');
+                } catch (fallbackError) {
+                    console.error('備用方案也失敗:', fallbackError);
+                    clearStreamMessage(assistantMessage);
+                    updateStreamMessage(assistantMessage, '❌ 連接錯誤：' + error.message);
+                    finalizeStreamMessage(assistantMessage);
                 }
             } finally {
                 isProcessing = false;
@@ -1463,8 +1594,23 @@
         }
         
         function sendQuickAction(action) {
+            // 如果正在處理，忽略點擊
+            if (isProcessing) {
+                return;
+            }
+            
             // 快速操作不需要上傳文件也能使用
             document.getElementById('chatInput').value = action;
+            
+            // 添加視覺反饋
+            const button = event.currentTarget;
+            if (button) {
+                button.style.transform = 'translateX(8px)';
+                setTimeout(() => {
+                    button.style.transform = 'translateX(4px)';
+                }, 200);
+            }
+            
             sendMessage();
         }
         
@@ -1519,20 +1665,101 @@
                 <div class="message-avatar">🤖</div>
                 <div class="message-content-wrapper">
                     <div class="message-content" id="stream-content">
-                        <span class="typing-indicator"></span>
+                        <div class="thinking-animation">
+                            <span class="thinking-text">正在思考</span>
+                            <span class="thinking-dots">
+                                <span class="dot">.</span>
+                                <span class="dot">.</span>
+                                <span class="dot">.</span>
+                            </span>
+                        </div>
                     </div>
                     <div class="message-time">${time}</div>
                 </div>
             `;
             
+            // 添加動畫效果
+            messageDiv.style.opacity = '0';
+            messageDiv.style.transform = 'translateY(20px)';
+            
             chatMessages.appendChild(messageDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // 觸發動畫
+            requestAnimationFrame(() => {
+                messageDiv.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                messageDiv.style.opacity = '1';
+                messageDiv.style.transform = 'translateY(0)';
+            });
+            
+            // 如果思考時間過長，顯示額外提示
+            const statusMessages = [
+                { delay: 3000, message: '正在分析您的問題，請稍候...' },
+                { delay: 8000, message: '正在生成詳細的回答...' },
+                { delay: 15000, message: '這個問題比較複雜，需要多一點時間...' }
+            ];
+            
+            const timers = [];
+            statusMessages.forEach(({ delay, message }) => {
+                const timer = setTimeout(() => {
+                    const contentDiv = messageDiv.querySelector('#stream-content');
+                    if (contentDiv && contentDiv.querySelector('.thinking-animation')) {
+                        // 如果是第一個狀態消息，添加 long-wait 類
+                        if (delay === 3000) {
+                            contentDiv.querySelector('.thinking-animation').classList.add('long-wait');
+                        }
+                        
+                        // 移除之前的狀態消息
+                        const oldStatus = contentDiv.querySelector('.status-message');
+                        if (oldStatus) {
+                            oldStatus.remove();
+                        }
+                        
+                        // 添加新的狀態消息
+                        const statusMsg = document.createElement('div');
+                        statusMsg.className = 'status-message';
+                        statusMsg.textContent = message;
+                        contentDiv.appendChild(statusMsg);
+                    }
+                }, delay);
+                timers.push(timer);
+            });
+            
+            // 保存計時器 IDs 以便清理
+            messageDiv.dataset.timers = JSON.stringify(timers);
+            
+            // 平滑滾動到底部
+            setTimeout(() => {
+                chatMessages.scrollTo({
+                    top: chatMessages.scrollHeight,
+                    behavior: 'smooth'
+                });
+            }, 100);
             
             return messageDiv;
         }
         
+        function clearStreamMessage(messageDiv) {
+            const contentDiv = messageDiv.querySelector('#stream-content');
+            if (contentDiv) {
+                // 清除所有計時器
+                if (messageDiv.dataset.timers) {
+                    try {
+                        const timers = JSON.parse(messageDiv.dataset.timers);
+                        timers.forEach(timer => clearTimeout(timer));
+                    } catch (e) {
+                        console.error('清除計時器錯誤:', e);
+                    }
+                    delete messageDiv.dataset.timers;
+                }
+                contentDiv.innerHTML = '';
+                contentDiv.dataset.content = '';
+            }
+        }
+        
         function updateStreamMessage(messageDiv, content) {
             const contentDiv = messageDiv.querySelector('#stream-content');
+            if (!contentDiv) return;
+            
             const currentContent = contentDiv.dataset.content || '';
             const newContent = currentContent + content;
             
@@ -1546,7 +1773,13 @@
         
         function finalizeStreamMessage(messageDiv) {
             const contentDiv = messageDiv.querySelector('#stream-content');
-            contentDiv.removeAttribute('id');
+            if (contentDiv) {
+                contentDiv.removeAttribute('id');
+                // 如果內容為空，添加默認消息
+                if (!contentDiv.dataset.content || contentDiv.dataset.content.trim() === '') {
+                    contentDiv.innerHTML = '抱歉，我暫時無法回答您的問題。';
+                }
+            }
         }
         
         function escapeHtml(text) {
